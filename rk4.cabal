@@ -3,11 +3,11 @@
 
 name:                rk4
 version:             0.1.0.0
-synopsis:            runge_kutta example
+-- synopsis:            
 -- description:         
--- license:             
+license:             MIT
 license-file:        LICENSE
-author:              Sumner Hearth
+author:              Sumner
 maintainer:          sumnernh@gmail.com
 -- copyright:           
 category:            Math
@@ -15,8 +15,8 @@ build-type:          Simple
 -- extra-source-files:  
 cabal-version:       >=1.10
 
-library
-  -- exposed-modules:     
+executable rk4
+  main-is:             rk4.hs
   -- other-modules:       
   -- other-extensions:    
   build-depends:       base >=4.7 && <4.8
