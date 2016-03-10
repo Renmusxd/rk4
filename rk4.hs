@@ -2,77 +2,80 @@ import System.Environment
 import Debug.Trace
 
 -- List of [I.C.] -> t -> [Xs]
-type Coord = (Double,Double,Double)
-type ODE = Coord->Double->Double
-type SysODEs = (ODE,ODE,ODE)
+type Coord = Double
+type Coords = [Coord]
+type ODE = Coords->Time->Coord
 type Time = Double
--- Takes a list of functions x', y', z', ...
--- and a list of initial conditions x0, y0, z0, ...
--- plus a time step dt
--- Returns a list of new values
-rk4_poc :: SysODEs -> Coord -> Time -> Time -> Coord
-rk4_poc derivs knots t dt =
-  let (dx,dy,dz) = derivs in
-  let (x0,y0,z0) = knots in
-  let x1 = dx knots t in
-  let y1 = dy knots t in
-  let z1 = dz knots t in
-  let tbar = dt/2 in
-  let inc_coord1 = (x0+tbar*x1,y0+tbar*y1,z0+tbar*z1) in
-  let x2 = dx inc_coord1 (t+tbar) in
-  let y2 = dy inc_coord1 (t+tbar) in
-  let z2 = dz inc_coord1 (t+tbar) in
-  let inc_coord2 = (x0+tbar*x2,y0+tbar*y2,z0+tbar*z2) in
-  let x3 = dx inc_coord2 (t+tbar) in
-  let y3 = dy inc_coord2 (t+tbar) in
-  let z3 = dz inc_coord2 (t+tbar) in
-  let inc_coord3 = (x0+dt*x3,y0+dt*y3,z0+dt*z3) in
-  let x4 = dx inc_coord3 (t+dt) in
-  let y4 = dy inc_coord3 (t+dt) in
-  let z4 = dz inc_coord3 (t+dt) in
-  -- Finally put it all together
-  let xn = (1/6)*(x1 + 2*x2 + x3 + x4) in
-  let yn = (1/6)*(y1 + 2*y2 + y3 + y4) in
-  let zn = (1/6)*(z1 + 2*z2 + z3 + z4) in
-  (xn,yn,zn)
+type ErrFun = Coords->Coords->Bool
 
+-- Applies each function to a single argument, returns list
 applyeach :: [a->b] -> a -> [b] -> [b]
 applyeach (h:t) v p = applyeach t v (p++[h v])
 applyeach [] v p = p
 
-mult_weight w (h1:t1) (h2:t2) p = mult_weight w t1 t2 (p++[h1 + w*h2]);
-mult_weight w [] [] p = p;
-mult_weight w l1 l2 p = error ("MW: Different length "++(show l1)++" "++(show l2))
+-- adds vectors and weighs second one: return v + (w*u)
+mult_weight :: Double -> [Double] -> [Double] -> [Double]
+mult_weight w = zipWith (\a b -> a + (w*b))
 
+-- maps a function which takes four arguments
+fourmap :: (t -> t1 -> t2 -> t3 -> a) -> [t] -> [t1] -> [t2] -> [t3] -> [a] -> [a]
 fourmap f (h1:t1) (h2:t2) (h3:t3) (h4:t4) p = fourmap f t1 t2 t3 t4 (p++[f h1 h2 h3 h4])
 fourmap f [] [] [] [] p = p
 fourmap _ _ _ _ _ _ = error ("PM: List of different length")
 
-
-rk4_step :: [[Double]->Double->Double] -> [Double] -> Time -> Time -> [Double]
+-- rk4 integration single step
+rk4_step :: [ODE] -> [Coord] -> Time -> Time -> [Coord]
 rk4_step derivs knots t dt =
   let tbar = dt/2 in
-  let tn = t + dt in
   let d_t = map (\d c-> d c t) derivs in
   let d_tbar = map (\d c-> d c (t+tbar)) derivs in
   let d_tdt = map (\d c-> d c (t+dt)) derivs in
   let k1 = applyeach d_t knots [] in  -- For each initial condition do q1 = dq q0 t
-  let k2 = applyeach d_tbar (mult_weight tbar knots k1 []) [] in
-  let k3 = applyeach d_tbar (mult_weight tbar knots k2 []) [] in
-  let k4 = applyeach d_tdt (mult_weight tn knots k3 []) [] in
-  fourmap (\a b c d -> (1/6)*(a + (2*b) + c + d)) k1 k2 k3 k4 []
+  let k2 = applyeach d_tbar (mult_weight tbar knots k1) [] in
+  let k3 = applyeach d_tbar (mult_weight tbar knots k2) [] in
+  let k4 = applyeach d_tdt (mult_weight dt knots k3) [] in
+  let toadd = fourmap (\a b c d -> (1/6)*dt*(a + (2*b) + (2*c) + d)) k1 k2 k3 k4 [] in
+  zipWith (+) knots toadd
 
-rk4 :: [[Double]->Double->Double] -> [Double] -> Time -> Time -> Time -> [Double]
+-- rk4 integration
+rk4 :: [ODE] -> Coords -> Time -> Time -> Time -> Coords
 rk4 derivs ics start_t end_t step_size =
   let time_table = [start_t,step_size .. end_t] in
-  foldr rk4_step_fun ics time_table
-  where rk4_step_fun t k0s =
-          trace (show k0s) (rk4_step derivs k0s t step_size)
-  
--- x'' + ax' + bsin(x) = F(t)
+  foldl rk4_step_fun ics time_table
+  where rk4_step_fun k0s t = rk4_step derivs k0s t step_size
 
+-- rk4 variable
+-- ODES -> I.C. -> Err -> Start_T -> End_T -> I.dt -> Out
+rk4v :: [ODE] -> Coords -> ErrFun -> Time -> Time -> Time -> Coords
+rk4v derivs ics errf start_t end_t step_size =
+  let c1 = rk4 derivs ics start_t end_t step_size in
+  let c2 = rk4 derivs ics start_t end_t (step_size/2.0) in
+  if errf c1 c2 then rk4v derivs ics errf start_t end_t (step_size/2.0)
+  else c2
+
+-- rk4 step variable
+rk4sv :: [ODE] -> Coords -> ErrFun -> Time -> Time -> Time -> Coords
+rk4sv derivs ics errf start_t end_t step_size =
+  let use_dt = min (end_t - start_t) step_size in
+  let basec = rk4_step derivs ics start_t use_dt in
+  let (newc, newdt) = rk4sv_helper ics basec start_t use_dt in
+  if (start_t+newdt >= end_t) then
+    newc
+  else
+    rk4sv derivs newc errf (start_t+newdt) end_t newdt  
+  where
+    -- rk4sv_helper :: Coords -> Coords -> Time -> Time -> (Coords, Time)
+    rk4sv_helper basec intc t dt =
+      let halfc = rk4_step derivs basec t (dt/2.0) in
+      let c2 = rk4_step derivs halfc (t+(dt/2.0)) (dt/2.0) in
+      if errf intc c2 then
+        rk4sv_helper basec c2 t (dt/2.0)
+      else
+        (c2, dt)    
+
+            
 
 main :: IO()
-main = print "rk4"
+main = print (show (rk4 [\xs t -> head xs] [1] 0 1 0.001))
 
 
